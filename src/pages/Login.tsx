@@ -100,7 +100,7 @@ export function Login() {
         </div>
 
         <p className="mt-8 text-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-          &copy; 2024 SmartSeason Infrastructure
+          &copy; 2026 SmartSeason Infrastructure
         </p>
       </div>
     </div>
