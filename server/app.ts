@@ -10,22 +10,23 @@ dotenv.config();
 
 const app = express();
 
-// Initialize DB
-initDb().catch(err => console.error('DB init failed:', err));
+// Initialize Database (non-blocking)
+initDb().catch(err => console.error('Initial database setup failed:', err));
 
 app.use(cors());
 app.use(express.json());
 
-// Routes
+// API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/fields', fieldRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 
+// Health Check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Error handler
+// Global Error Handler
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error('Unhandled Error:', err);
   res.status(500).json({
