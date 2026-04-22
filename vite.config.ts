@@ -7,6 +7,7 @@ export default defineConfig(({mode}) => {
   const env = loadEnv(mode, '.', '');
   return {
     plugins: [react(), tailwindcss()],
+    
     define: {},
     resolve: {
       alias: {
@@ -15,6 +16,12 @@ export default defineConfig(({mode}) => {
     },
     server: {
       hmr: false,
+      proxy: {
+      '/api': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+      }
+    }
     },
   };
 });
