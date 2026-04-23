@@ -5,6 +5,7 @@ let db: any;
 
 class NeonDb {
   private sql: any;
+
   constructor(url: string) {
     this.sql = neon(url);
   }
@@ -14,16 +15,16 @@ class NeonDb {
     return query.replace(/\?/g, () => `$${count++}`);
   }
 
+  // Use sql.query() — the conventional function-call API for dynamic queries
   private async executeQuery(q: string, p: any[] = []) {
-    if (typeof this.sql.query === 'function') {
-      return await this.sql.query(q, p);
-    }
-    return await this.sql(q, p);
+    return await this.sql.query(q, p);
   }
 
   async all(query: string, params: any[] = []) {
     try {
-      return await this.executeQuery(this.convertQuery(query), params);
+      const result = await this.executeQuery(this.convertQuery(query), params);
+      // sql.query returns a pg-style result object: { rows: [...] }
+      return result.rows ?? result;
     } catch (error) {
       console.error('Database Error (all):', error);
       throw error;
@@ -32,7 +33,8 @@ class NeonDb {
 
   async get(query: string, params: any[] = []) {
     try {
-      const rows = await this.executeQuery(this.convertQuery(query), params);
+      const result = await this.executeQuery(this.convertQuery(query), params);
+      const rows = result.rows ?? result;
       return rows[0] || null;
     } catch (error) {
       console.error('Database Error (get):', error);
@@ -43,17 +45,20 @@ class NeonDb {
   async run(query: string, params: any[] = []) {
     try {
       let q = this.convertQuery(query).trim();
-      // Remove trailing semicolon if present to avoid syntax error when appending RETURNING
+
       if (q.endsWith(';')) {
         q = q.slice(0, -1);
       }
-      
+
       if (q.toUpperCase().startsWith('INSERT')) {
-        // Support for returning the last inserted ID
-        q += ' RETURNING id';
-        const rows = await this.executeQuery(q, params);
-        return { lastID: rows[0]?.id };
+        if (!q.toUpperCase().includes('RETURNING')) {
+          q += ' RETURNING id';
+        }
+        const result = await this.executeQuery(q, params);
+        const rows = result.rows ?? result;
+        return { lastID: rows[0]?.id ?? null };
       }
+
       await this.executeQuery(q, params);
       return { changes: 1 };
     } catch (error) {
@@ -64,8 +69,11 @@ class NeonDb {
 
   async exec(query: string) {
     try {
-      // Split statements and execute sequentially
-      const statements = query.split(';').filter(s => s.trim().length > 0);
+      const statements = query
+        .split(';')
+        .map((s: string) => s.trim())
+        .filter((s: string) => s.length > 0);
+
       for (const s of statements) {
         await this.executeQuery(s);
       }
@@ -79,16 +87,13 @@ class NeonDb {
 export async function resetDb() {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error('DATABASE_URL environment variable is missing');
-  
-  db = new NeonDb(url);
-  
+
+  const tempDb = new NeonDb(url);
   console.log('Dropping tables...');
-  await db.exec(`
-    DROP TABLE IF EXISTS field_updates;
-    DROP TABLE IF EXISTS assignments;
-    DROP TABLE IF EXISTS fields;
-    DROP TABLE IF EXISTS users;
-  `);
+  await tempDb.exec('DROP TABLE IF EXISTS field_updates');
+  await tempDb.exec('DROP TABLE IF EXISTS assignments');
+  await tempDb.exec('DROP TABLE IF EXISTS fields');
+  await tempDb.exec('DROP TABLE IF EXISTS users');
   console.log('Tables dropped successfully');
 }
 
@@ -102,7 +107,6 @@ export async function initDb() {
   try {
     db = new NeonDb(url);
 
-    // Create Tables (Postgres Syntax)
     await db.exec(`
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
@@ -111,8 +115,10 @@ export async function initDb() {
         password_hash TEXT NOT NULL,
         role TEXT CHECK(role IN ('admin', 'agent')) NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
+      )
+    `);
 
+    await db.exec(`
       CREATE TABLE IF NOT EXISTS fields (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
@@ -121,45 +127,44 @@ export async function initDb() {
         current_stage TEXT NOT NULL,
         status TEXT CHECK(status IN ('Active', 'At Risk', 'Completed')) DEFAULT 'Active',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-
-      CREATE TABLE IF NOT EXISTS assignments (
-        id SERIAL PRIMARY KEY,
-        field_id INTEGER NOT NULL,
-        agent_id INTEGER NOT NULL,
-        assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (field_id) REFERENCES fields(id) ON DELETE CASCADE,
-        FOREIGN KEY (agent_id) REFERENCES users(id) ON DELETE CASCADE,
-        UNIQUE(field_id, agent_id)
-      );
-
-      CREATE TABLE IF NOT EXISTS field_updates (
-        id SERIAL PRIMARY KEY,
-        field_id INTEGER NOT NULL,
-        agent_id INTEGER NOT NULL,
-        stage TEXT NOT NULL,
-        notes TEXT,
-        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (field_id) REFERENCES fields(id) ON DELETE CASCADE,
-        FOREIGN KEY (agent_id) REFERENCES users(id) ON DELETE CASCADE
-      );
+      )
     `);
 
-    // Seed Data
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS assignments (
+        id SERIAL PRIMARY KEY,
+        field_id INTEGER NOT NULL REFERENCES fields(id) ON DELETE CASCADE,
+        agent_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(field_id, agent_id)
+      )
+    `);
+
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS field_updates (
+        id SERIAL PRIMARY KEY,
+        field_id INTEGER NOT NULL REFERENCES fields(id) ON DELETE CASCADE,
+        agent_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        stage TEXT NOT NULL,
+        notes TEXT,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Seed only if empty
     const userCount = await db.get('SELECT COUNT(*) as count FROM users');
     if (parseInt(userCount.count) === 0) {
-      // Seed Users
       const adminPass = await bcrypt.hash('admin123', 10);
       const agentPass = await bcrypt.hash('agent123', 10);
 
-      const adminId = (await db.run(
+      await db.run(
         'INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)',
         ['Admin User', 'admin@example.com', adminPass, 'admin']
-      )).lastID;
+      );
 
       const agents = [];
       const agentNames = [
-        'Sarah Cooper', 'Michael Chen', 'Elena Rodriguez', 
+        'Sarah Cooper', 'Michael Chen', 'Elena Rodriguez',
         'David Smith', 'Amara Okafor', 'James Wilson'
       ];
 
@@ -172,7 +177,6 @@ export async function initDb() {
         agents.push({ id: res.lastID, name: agentNames[i] });
       }
 
-      // Seed Fields
       const fieldData = [
         ['North Valley Corn', 'Corn', '2024-03-15', 'Vegetative', 'Active'],
         ['East Ridge Soybeans', 'Soybeans', '2024-04-01', 'Germination', 'Active'],
@@ -199,7 +203,6 @@ export async function initDb() {
         fieldIds.push(res.lastID);
       }
 
-      // Seed Assignments (Assign fields to agents)
       for (let i = 0; i < fieldIds.length; i++) {
         const agent = agents[i % agents.length];
         await db.run(
@@ -208,24 +211,22 @@ export async function initDb() {
         );
       }
 
-      // Seed some initial field updates
       for (let i = 0; i < 5; i++) {
-        const fieldId = fieldIds[i];
-        const agentId = agents[i % agents.length].id;
         await db.run(
           'INSERT INTO field_updates (field_id, agent_id, stage, notes) VALUES (?, ?, ?, ?)',
-          [fieldId, agentId, 'Vegetative', 'Initial report. Growth looks healthy and consistent across the sector.']
+          [fieldIds[i], agents[i % agents.length].id, 'Vegetative', 'Initial report. Growth looks healthy and consistent across the sector.']
         );
       }
     }
 
-    console.log('PostgreSQL (Neon) initialized');
+    console.log('✅ PostgreSQL (Neon) initialized');
   } catch (error) {
     console.error('❌ Failed to initialize database:', error);
+    throw error;
   }
 }
 
 export function getDb() {
-  if (!db) throw new Error('Database not initialized');
+  if (!db) throw new Error('Database not initialized. Ensure initDb() has been called.');
   return db;
 }

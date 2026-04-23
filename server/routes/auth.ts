@@ -2,8 +2,8 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
-import { getDb } from '../db.ts';
-import { authenticate, authorize, AuthRequest } from '../middleware/auth.ts';
+import { getDb } from '../db.js';
+import { authenticate, authorize, AuthRequest } from '../middleware/auth.js';
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key-change-me';

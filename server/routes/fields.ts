@@ -1,9 +1,9 @@
 import express from 'express';
 import { z } from 'zod';
-import { getDb } from '../db.ts';
-import { authenticate, authorize } from '../middleware/auth.ts';
-import type { AuthRequest } from '../middleware/auth.ts';
-import { syncFieldStatus } from '../lib/statusHelper.ts';
+import { getDb } from '../db.js';
+import { authenticate, authorize } from '../middleware/auth.js';
+import type { AuthRequest } from '../middleware/auth.js';
+import { syncFieldStatus } from '../lib/statusHelper.js';
 
 const router = express.Router();
 
@@ -22,7 +22,7 @@ const updateSchema = z.object({
 // Get all fields (Admin sees all, Agent sees assigned)
 router.get('/', authenticate, async (req: AuthRequest, res) => {
   const db = getDb();
-  
+
   // Update all statuses in parallel before returning
   const allFieldIds = await db.all('SELECT id FROM fields');
   await Promise.all(allFieldIds.map((f: any) => syncFieldStatus(db, f.id)));
@@ -52,7 +52,7 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
 router.get('/:id', authenticate, async (req: AuthRequest, res) => {
   const db = getDb();
   const id = parseInt(req.params.id);
-  
+
   await syncFieldStatus(db, id);
 
   const field = await db.get(`
@@ -71,7 +71,10 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
 
   // Check access for agents
   if (req.user?.role === 'agent') {
-    const assigned = await db.get('SELECT id FROM assignments WHERE field_id = ? AND agent_id = ?', [id, req.user.id]);
+    const assigned = await db.get(
+      'SELECT id FROM assignments WHERE field_id = ? AND agent_id = ?',
+      [id, req.user.id]
+    );
     if (!assigned) {
       return res.status(403).json({ error: 'Access denied' });
     }
@@ -132,7 +135,10 @@ router.post('/:id/assign', authenticate, authorize(['admin']), async (req, res) 
   const fieldId = parseInt(req.params.id);
   try {
     await db.run('DELETE FROM assignments WHERE field_id = ?', [fieldId]);
-    await db.run('INSERT INTO assignments (field_id, agent_id) VALUES (?, ?)', [fieldId, agent_id]);
+    await db.run(
+      'INSERT INTO assignments (field_id, agent_id) VALUES (?, ?)',
+      [fieldId, agent_id]
+    );
     res.json({ message: 'Agent assigned' });
   } catch (error: any) {
     res.status(400).json({ error: error.message });
@@ -146,9 +152,12 @@ router.post('/:id/updates', authenticate, async (req: AuthRequest, res) => {
     const db = getDb();
     const fieldId = parseInt(req.params.id);
     const agentId = req.user?.id;
-    
+
     // Check assignment
-    const assignment = await db.get('SELECT id FROM assignments WHERE field_id = ? AND agent_id = ?', [fieldId, agentId]);
+    const assignment = await db.get(
+      'SELECT id FROM assignments WHERE field_id = ? AND agent_id = ?',
+      [fieldId, agentId]
+    );
     if (!assignment && req.user?.role !== 'admin') {
       return res.status(403).json({ error: 'Field not assigned to you' });
     }
@@ -157,7 +166,7 @@ router.post('/:id/updates', authenticate, async (req: AuthRequest, res) => {
       'INSERT INTO field_updates (field_id, agent_id, stage, notes) VALUES (?, ?, ?, ?)',
       [fieldId, agentId, stage, notes]
     );
-    
+
     // Update current stage in fields table
     await db.run('UPDATE fields SET current_stage = ? WHERE id = ?', [stage, fieldId]);
 
@@ -184,6 +193,7 @@ router.get('/:id/updates', authenticate, async (req, res) => {
 });
 
 // Get available agents (for admin assignment)
+// NOTE: This route must be defined BEFORE /:id to avoid being matched as an id
 router.get('/agents/available', authenticate, authorize(['admin']), async (req, res) => {
   const db = getDb();
   const agents = await db.all("SELECT id, name, email FROM users WHERE role = 'agent'");

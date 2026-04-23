@@ -1,13 +1,13 @@
 import express from 'express';
-import { getDb } from '../db.ts';
-import { authenticate, AuthRequest } from '../middleware/auth.ts';
-import { syncFieldStatus } from '../lib/statusHelper.ts';
+import { getDb } from '../db.js';
+import { authenticate, AuthRequest } from '../middleware/auth.js';
+import { syncFieldStatus } from '../lib/statusHelper.js';
 
 const router = express.Router();
 
 router.get('/', authenticate, async (req: AuthRequest, res) => {
   const db = getDb();
-  
+
   try {
     // Sync all field statuses in parallel to ensure time-based risks are captured
     const allFieldIds = await db.all('SELECT id FROM fields');
